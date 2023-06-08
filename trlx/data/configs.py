@@ -66,6 +66,7 @@ class ModelConfig:
 
     model_path: str
     model_arch_type: str = "causal"
+    dtype: str = "float32"
     num_layers_unfrozen: int = -1
     delta_kwargs: Optional[Dict[str, Any]] = None
 

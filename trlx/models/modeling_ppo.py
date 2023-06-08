@@ -327,6 +327,17 @@ class AutoModelForCausalLMWithValueHead(PreTrainedModelWrapper):
         del state_dict
         gc.collect()  # noqa: E702
 
+    @classmethod
+    def from_pretrained(  # noqa: max-complexity
+        cls,
+        *args,
+        **kwargs,
+    ):
+        model = super(AutoModelForCausalLMWithValueHead, cls).from_pretrained(*args, **kwargs)
+        if "torch_dtype" in kwargs:
+            model.v_head = model.v_head.to(kwargs["torch_dtype"])
+        return model
+
 
 class AutoModelForCausalLMWithHydraValueHead(AutoModelForCausalLMWithValueHead):
     _supported_modules = ["v_head", "frozen_head"]
