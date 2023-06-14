@@ -162,7 +162,7 @@ class PromptPipeline(BasePipeline):
             for key in xs[0]:
                 if key != "input_ids" and key != "attention_mask":
                     out[key] = [x[key] for x in xs]
-
+                    
             return out
 
         return DataLoader(self, batch_size=batch_size, collate_fn=collate_fn, shuffle=shuffle)

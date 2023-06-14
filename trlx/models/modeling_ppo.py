@@ -196,7 +196,10 @@ class PPOConfig(MethodConfig):
         vf_clipfrac = torch.sum((vf_loss2 > vf_loss1).float() * mask) / n
 
         log_ratio = (logprobs - old_logprobs) * mask
+        if not torch.allclose(log_ratio, torch.zeros_like(log_ratio), atol=1e-3):
+            breakpoint()
         ratio = torch.exp(log_ratio)
+        print(torch.abs(log_ratio).max())
         # Unbiased KL-div estimates (`k3`). Ref: http://joschu.net/blog/kl-approx.html
         with torch.no_grad():
             approx_kl = torch.mean((ratio - 1) - log_ratio)
@@ -212,12 +215,15 @@ class PPOConfig(MethodConfig):
 
         loss = pg_loss + self.vf_coef * vf_loss
 
+        #breakpoint()
+
         stats = dict(
             losses=dict(
                 total_loss=loss.item(),
                 policy_loss=pg_loss.item(),
                 value_loss=vf_loss.item(),
             ),
+            advantages=(torch.sum(advantages * mask) / n).item(),
             values=dict(
                 get_tensor_stats(values, mask, n),
                 values_error=torch.sum(((values - returns) * mask) ** 2) / n,

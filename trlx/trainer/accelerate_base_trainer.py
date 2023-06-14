@@ -73,9 +73,11 @@ class AccelerateRLTrainer(BaseRLTrainer):
         self.tokenizer.padding_side = config.tokenizer.padding_side
         self.tokenizer.truncation_side = config.tokenizer.truncation_side
         self.tokenizer.sep_token = "<sep>"
+
         if config.model.model_arch_type != "seq2seq":
             self.tokenizer.pad_token = self.tokenizer.eos_token
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        self.tokenizer.eos_token_id = 2 # TODO: Tobias: Move elsewhere?
 
         script_name = os.path.basename(sys.argv[0]).rsplit(".", 1)[0]
         if not isinstance(config.model.model_path, str):
@@ -166,6 +168,10 @@ class AccelerateRLTrainer(BaseRLTrainer):
             delta_model.freeze_module(exclude=["deltas"], set_state_dict=True)
             if self.accelerator.is_main_process:
                 delta_model.log()
+
+        # Tobias: Test to disable dropout
+        model = model.eval()
+
         return model
 
     def setup_optimizer(self):
@@ -218,7 +224,6 @@ class AccelerateRLTrainer(BaseRLTrainer):
                 output_start_ix = 0
             else:
                 output_start_ix = prompt_size
-
             str_prompt = self.tokenizer.decode(prompt[:prompt_size], skip_special_tokens=True)
             str_output = self.tokenizer.decode(sample[output_start_ix:], skip_special_tokens=True)
             # Trim outputs up to `self.stop_sequences` if any are present
@@ -262,9 +267,10 @@ class AccelerateRLTrainer(BaseRLTrainer):
             kwargs = dict(self.generate_kwargs, **kwargs)
 
         with torch.no_grad():
-            return self.accelerator.unwrap_model(self.model).generate(
+            res = self.accelerator.unwrap_model(self.model).generate(
                 input_ids=input_ids, attention_mask=attention_mask, **kwargs
             )
+            return res
 
     def generate_eval(self, input_ids, attention_mask=None, **kwargs):
         """Wraps hf's `generate` adding some specific method's defaults"""
@@ -533,6 +539,7 @@ class AccelerateRLTrainer(BaseRLTrainer):
                     forward_time = 0
                     backward_time = 0
                     stats_accum = []
+                    #breakpoint()
                     for mb in mbs:
                         with self._accumulate():
                             forward_time -= time()

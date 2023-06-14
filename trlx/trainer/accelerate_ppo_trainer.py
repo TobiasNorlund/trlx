@@ -181,7 +181,9 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
         else:
             tokens = torch.cat((query_tensors, response_tensors), dim=1)
             attention_mask = tokens.not_equal(self.tokenizer.pad_token_id).long().to(tokens.device)
-            outputs = self.model(tokens, attention_mask, return_dict=True)
+            start_pos_idx = torch.argmax(torch.arange(attention_mask.shape[1], 0, -1, device=attention_mask.device) * attention_mask, 1, keepdim=True)
+            position_ids = torch.max(torch.zeros_like(attention_mask), torch.arange(attention_mask.shape[1], device=attention_mask.device).repeat((attention_mask.shape[0], 1)) - start_pos_idx)
+            outputs = self.model(tokens, attention_mask, return_dict=True, position_ids=position_ids)
             logits = outputs.logits
             values_pred = outputs.value
             values_pred = values_pred[:, :-1]
@@ -189,10 +191,12 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
 
             start = query_tensors.shape[1] - 1
             end = start + response_length
+            #breakpoint()
             logprobs, values_pred, mask = (
                 logprobs[:, start:end],
                 values_pred[:, start:end],
-                attention_mask[:, start:end],
+                #attention_mask[:, start:end],
+                attention_mask[:, start+1:end+1],
             )
 
         loss, stats = self.config.method.loss(
@@ -399,22 +403,27 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             else:
                 all_tokens = torch.cat((prompt_tensors.to(device), sample_outputs), dim=1)
                 attention_mask = all_tokens.not_equal(self.tokenizer.pad_token_id).long().to(device)
+                start_pos_idx = torch.argmax(torch.arange(attention_mask.shape[1], 0, -1, device=attention_mask.device) * attention_mask, 1, keepdim=True)
+                position_ids = torch.max(torch.zeros_like(attention_mask), torch.arange(attention_mask.shape[1], device=attention_mask.device).repeat((attention_mask.shape[0], 1)) - start_pos_idx)
                 with torch.no_grad():
                     logits, *_, values = self.model(
                         all_tokens,
                         attention_mask=attention_mask,
+                        position_ids=position_ids
                     )
                     # TODO(dahoas): When hydra model works need to also support generation on hydra head
                     if hasattr(self.model, "frozen_head"):
                         ref_logits = self.model.forward_hydra(
                             all_tokens,
                             attention_mask=attention_mask,
+                            position_ids=position_ids,
                             return_dict=True,
                         ).logits
                     else:
                         ref_logits = self.ref_model(
                             all_tokens,
                             attention_mask=attention_mask,
+                            position_ids=position_ids,
                             return_dict=True,
                         ).logits
                         ref_logits = ref_logits.to(device)
@@ -436,6 +445,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
                 start = prompt_tensors.shape[1] - 1
 
             log_ratio = (logprobs - ref_logprobs) * attention_mask[:, :-1]
+            #breakpoint()
             kl = log_ratio.exp() - 1 - log_ratio
             mean_kl_per_token = kl.mean()
             mean_kl = kl.sum(1).mean()
