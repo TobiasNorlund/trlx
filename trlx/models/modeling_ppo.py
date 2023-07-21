@@ -214,6 +214,7 @@ class PPOConfig(MethodConfig):
         pg_clipfrac = torch.sum((pg_loss2 > pg_loss1).float() * mask) / n
 
         loss = pg_loss + self.vf_coef * vf_loss
+        #loss = self.vf_coef * vf_loss  # <- only value
 
         # breakpoint()
 
@@ -268,6 +269,13 @@ class AutoModelForCausalLMWithValueHead(PreTrainedModelWrapper):
     ):
         super().__init__(base_model)
         self.v_head = make_head(hf_get_hidden_size(self.base_model.config), 1)
+        # ADDED: v_depth
+        # v_depth is where in the transformer stack the value head reads. 
+        # Mainly used to make sure that the value head and policy model 
+        # do not share trainable parameters
+        self.v_depth = self.base_model.config.n_layer - 1
+        with torch.no_grad():
+            self.base_model.transformer.wte.weight[0].zero_()
 
     def forward(
         self,
@@ -298,7 +306,8 @@ class AutoModelForCausalLMWithValueHead(PreTrainedModelWrapper):
         forward_kwargs["return_dict"] = True
 
         outputs = self.base_model(**forward_kwargs)
-        value = self.v_head(outputs.hidden_states[-1]).squeeze(-1)
+        value = self.v_head(outputs.hidden_states[self.v_depth]).squeeze(-1)
+        
 
         if not return_dict:
             outputs = (outputs.logits,) + outputs[1:] + (value,)
@@ -357,7 +366,8 @@ class AutoModelForCausalLMWithHydraValueHead(AutoModelForCausalLMWithValueHead):
     ):
         super().__init__(base_model)
         self.num_layers_unfrozen = num_layers_unfrozen
-        if self.num_layers_unfrozen > 0:
+        if self.num_layers_unfrozen >= 0:
+            self.v_depth -= self.num_layers_unfrozen
             config = self.base_model.config
             branch_class = hf_get_branch_class(config)
             self.frozen_head = branch_class(
@@ -427,8 +437,16 @@ class ModelBranch(transformers.PreTrainedModel):
         super().__init__(base_model.config)
 
         # The branch is defined by the last `num_layers_unfrozen` layers of the pretrained model
-        decoder_blocks = deepcopy(hf_get_decoder_blocks(base_model))
-        self.decoder_blocks = nn.ModuleList(list(decoder_blocks)[-num_layers_unfrozen:])
+
+        # ADDED:
+        # Makes sure that stuff works with num_layers_unfrozen=0 (i.e only update heads?)
+        decoder_blocks = list(hf_get_decoder_blocks(base_model))
+        L = len(decoder_blocks)
+        self.decoder_blocks = nn.ModuleList(
+                deepcopy(decoder_blocks[L - num_layers_unfrozen:])
+                )
+        #decoder_blocks = deepcopy(hf_get_decoder_blocks(base_model))
+        #self.decoder_blocks = nn.ModuleList(list(decoder_blocks)[-num_layers_unfrozen:])
         self.final_norm = deepcopy(hf_get_decoder_final_norm(base_model))
         self.lm_head = deepcopy(hf_get_lm_head(base_model))
 

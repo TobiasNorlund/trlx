@@ -41,6 +41,13 @@ def freeze_bottom_causal_layers(model: nn.Module, num_layers_unfrozen: int = 0):
         hidden_layers_to_freeze = list(hidden_layers)[:-num_layers_unfrozen]
     else:
         hidden_layers_to_freeze = []
+
+    # we must freeze input embeddings, otherwise the SFT model will diverge
+    # when using hydra heads.
+    # Also: Why o why is this called from the trainer, and not at model init?
+    embedders = hf_get_embedders(model)
+    hidden_layers_to_freeze += embedders
+
     for layer in hidden_layers_to_freeze:
         layer.requires_grad_(False)
 
@@ -102,6 +109,11 @@ def findattr(obj, attrs: Tuple[str]) -> Union[object, None]:
             return rgetattr(obj, attr)
     raise ValueError(f"Could not find an attribute from `{attrs}` in `{obj}`")
 
+def hf_get_embedders(model: nn.Module) -> Tuple[nn.Module]:
+    """
+    FIX: HACK TO EXTRACT EMBEDDING PARTS OF MODELS.
+    """
+    return (model.transformer.wpe, model.transformer.wte)
 
 def hf_get_decoder(model: nn.Module) -> nn.Module:
     """Returns the causal decoder backbone of the specified HuggingFace transformers
